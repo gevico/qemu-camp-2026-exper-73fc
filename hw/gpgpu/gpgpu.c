@@ -233,7 +233,11 @@ static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
             s->kernel.shared_mem_size = val;
             break;
         case GPGPU_REG_DISPATCH:
-            // 写任意值触发内核执行
+            s->global_status &= ~GPGPU_STATUS_READY;
+            s->global_status |= GPGPU_STATUS_BUSY;
+            gpgpu_core_exec_kernel(s);
+            s->global_status &= ~GPGPU_STATUS_BUSY;
+            s->global_status |= GPGPU_STATUS_READY;
             break;
         
         /* DMA 引擎寄存器组 (0x0400 - 0x04FF) */
@@ -270,15 +274,28 @@ static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
         
         /* 线程上下文寄存器组 (0x1000 - 0x1FFF) */
         case GPGPU_REG_THREAD_ID_X:
+            s->simt.thread_id[0] = val;
+            break;
         case GPGPU_REG_THREAD_ID_Y:
+            s->simt.thread_id[1] = val;
+            break;
         case GPGPU_REG_THREAD_ID_Z:
+            s->simt.thread_id[2] = val;
+            break;
         case GPGPU_REG_BLOCK_ID_X:
+            s->simt.block_id[0] = val;
+            break;
         case GPGPU_REG_BLOCK_ID_Y:
+            s->simt.block_id[1] = val;
+            break;
         case GPGPU_REG_BLOCK_ID_Z:
+            s->simt.block_id[2] = val;
+            break;
         case GPGPU_REG_WARP_ID:
+            s->simt.warp_id = val;
+            break;
         case GPGPU_REG_LANE_ID:
-            qemu_log_mask(LOG_GUEST_ERROR,
-                         "GPGPU: Write to read-only register at addr 0x%" HWADDR_PRIx "\n", addr);
+            s->simt.lane_id = val;
             break;
         
         /* 同步寄存器组 (0x2000 - 0x2FFF) */
@@ -312,10 +329,12 @@ static uint64_t gpgpu_vram_read(void *opaque, hwaddr addr, unsigned size)
     uint64_t val = 0;
     
     if (addr + size > s->vram_size) {
-        return 0;  // 越界检查
+        qemu_log_mask(LOG_GUEST_ERROR,
+                     "GPGPU: VRAM read out of bounds: 0x%" HWADDR_PRIx " (size %u, max %" PRIu64 ")\n",
+                     addr, size, s->vram_size);
+        return 0;
     }
     
-    // 小端序读取
     for (unsigned i = 0; i < size; i++) {
         val |= (uint64_t)s->vram_ptr[addr + i] << (8 * i);
     }
@@ -329,10 +348,12 @@ static void gpgpu_vram_write(void *opaque, hwaddr addr, uint64_t val,
     GPGPUState *s = GPGPU(opaque);
     
     if (addr + size > s->vram_size) {
-        return;  // 越界检查
+        qemu_log_mask(LOG_GUEST_ERROR,
+                     "GPGPU: VRAM write out of bounds: 0x%" HWADDR_PRIx " (size %u, max %" PRIu64 ")\n",
+                     addr, size, s->vram_size);
+        return;
     }
     
-    // 小端序写入
     for (unsigned i = 0; i < size; i++) {
         s->vram_ptr[addr + i] = (val >> (8 * i)) & 0xFF;
     }
